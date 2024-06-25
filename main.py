@@ -1,7 +1,7 @@
 import requests
 import json
 
-RIOT_API_KEY = "RGAPI-d62b2bd9-b84f-4f0a-8b78-7726ac3dba73"
+RIOT_API_KEY = ""
 GAME_NAME = "NickNickNick"
 TAG_LINE = "NICK"
 
