@@ -1,15 +1,39 @@
 import requests
 import json
 import os
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 
 load_dotenv()
+
 riot_api_key = os.getenv('RIOT_API_KEY')
 openai_api_key = os.getenv('OPENAI_API_KEY')
 
 llm = ChatOpenAI(api_key=openai_api_key, model_name="gpt-3.5-turbo")
+
+app = FastAPI()
+
+# Set up CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class UserRequest(BaseModel):
+    game_name: str
+    tag_line: str
+
+class MatchChoiceRequest(BaseModel):
+    game_name: str
+    tag_line: str
+    match_index: int
 
 def get_puuid(game_name: str, tag_line: str):
     url = f"https://americas.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}"
@@ -18,17 +42,17 @@ def get_puuid(game_name: str, tag_line: str):
     }
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
-        raise Exception(f"Error fetching PUUID: {response.status_code} {response.text}")
+        raise HTTPException(status_code=404, detail="PUUID not found")
     return response.json()['puuid']
 
-def get_recent_match_ids(puuid: str, count: int = 20):
+def get_recent_match_ids(puuid: str, count: int = 10):
     url = f"https://americas.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?start=0&count={count}"
     headers = {
         "X-Riot-Token": riot_api_key
     }
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
-        raise Exception(f"Error fetching match IDs: {response.status_code} {response.text}")
+        raise HTTPException(status_code=404, detail="Match IDs not found")
     return response.json()
 
 def get_match_details(match_id: str):
@@ -38,7 +62,7 @@ def get_match_details(match_id: str):
     }
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
-        raise Exception(f"Error fetching match details: {response.status_code} {response.text}")
+        raise HTTPException(status_code=404, detail="Match details not found")
     return response.json()
 
 def get_updated_summoner_name(original_name: str):
@@ -95,38 +119,35 @@ def format_match_details(match_data, puuid):
 def get_response_from_openai(match_details: str):
     prompt_template = PromptTemplate(
         input_variables=["match_details"],
-        template="Analyze the following match data and provide a detailed description of who was the carry and who was the most useless player:\n{match_details}"
+        template="""Analyze the following match data and provide a detailed description of who was the carry and who was the most useless. Have some serious insults and pretend you're disappointed
+        Example: In this match, the carry of the team was clearly "CyborgBarber" playing as Sivir. With an impressive 15 kills, 8 deaths, and 19 assists, CyborgBarber dealt a whopping 60533 damage to champions and earned 23192 gold. Their performance was crucial in securing the victory for their team, leading the charge in team fights and dealing significant damage throughout the game. Now, onto the most useless player in this match, we have to point fingers at "AmazonFireTV" playing as Bard. With only 1 kill, 6 deaths, and a staggering 31 assists, AmazonFireTV's impact on the game was minimal at best. Their total damage dealt to champions was a measly 15646, and they earned the least gold among the team members. It's safe to say that AmazonFireTV was dead weight in this match, being carried by the rest of the team and contributing very little to the overall success. AmazonFireTV, if you're reading this, I have to say that your performance was incredibly disappointing and you should seriously reconsider your choice of champion. You were a burden to your team and your lackluster performance was a disgrace to the game. Step up your game or consider finding a new hobby because League of Legends clearly isn't your forte.
+        Now analyze the following match data:
+        {match_details}"""
     )
     sequence = prompt_template | llm
     response = sequence.invoke({"match_details": match_details})
     return response
 
-def main():
-    game_name = "NickNickNick"  # replace with your game name
-    tag_line = "NICK"  # replace with your tag line
+@app.post("/get_matches/")
+async def get_matches(request: UserRequest):
+    puuid = get_puuid(request.game_name, request.tag_line)
+    match_ids = get_recent_match_ids(puuid)
+    return {"match_ids": match_ids}
+
+@app.post("/analyze_match/")
+async def analyze_match(request: MatchChoiceRequest):
+    puuid = get_puuid(request.game_name, request.tag_line)
+    match_ids = get_recent_match_ids(puuid)
+    if request.match_index < 0 or request.match_index >= len(match_ids):
+        raise HTTPException(status_code=400, detail="Invalid match index")
     
-    try:
-        puuid = get_puuid(game_name, tag_line)
-        match_ids = get_recent_match_ids(puuid)
-        print("Recent Matches:")
-        for i, match_id in enumerate(match_ids):
-            print(f"{i + 1}: Match ID {match_id}")
-        
-        match_choice = int(input("Enter the number of the match you want to analyze (1-20): ")) - 1
-        if match_choice < 0 or match_choice >= len(match_ids):
-            raise ValueError("Invalid match choice")
-        
-        match_id = match_ids[match_choice]
-        match_data = get_match_details(match_id)
-        match_details = format_match_details(match_data, puuid)
-        match_details_str = json.dumps(match_details, indent=4)
-        print("Match Details:")
-        print(match_details_str)
-        openai_response = get_response_from_openai(match_details_str)
-        print("\nOpenAI Analysis:")
-        print(openai_response)
-    except Exception as e:
-        print(e)
+    match_id = match_ids[request.match_index]
+    match_data = get_match_details(match_id)
+    match_details = format_match_details(match_data, puuid)
+    match_details_str = json.dumps(match_details, indent=4)
+    openai_response = get_response_from_openai(match_details_str)
+    return {"openai_response": openai_response.content}  # Correctly access the content attribute
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
