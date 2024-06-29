@@ -80,12 +80,16 @@ def format_match_details(match_data, puuid):
         'game_mode': match_data['info']['gameMode'],
         'teams': []
     }
-    
+
     player_team_id = None
     for participant in match_data['info']['participants']:
         if participant['puuid'] == puuid:
             player_team_id = participant['teamId']
             break
+
+    good_player = None
+    bad_player = None
+    players = []
 
     for team in match_data['info']['teams']:
         team_info = {
@@ -111,16 +115,22 @@ def format_match_details(match_data, puuid):
                     'items': [participant[f'item{i}'] for i in range(7)]
                 }
                 team_info['players'].append(player_info)
-        if team_info['team_id'] == player_team_id:
-            match_info['teams'].append(team_info)
+                players.append(player_info)
+        match_info['teams'].append(team_info)
     
-    return match_info
+    if players:
+        good_player = max(players, key=lambda x: x['kills'])
+        bad_player = min(players, key=lambda x: x['kills'])
+    
+    return match_info, good_player, bad_player
 
 def get_response_from_openai(match_details: str):
     prompt_template = PromptTemplate(
         input_variables=["match_details"],
-        template="""Analyze the following match data and provide a detailed description of who was the carry and who was the most useless. Have some serious insults and pretend you're disappointed
-        Example: In this match, the carry of the team was clearly "CyborgBarber" playing as Sivir. With an impressive 15 kills, 8 deaths, and 19 assists, CyborgBarber dealt a whopping 60533 damage to champions and earned 23192 gold. Their performance was crucial in securing the victory for their team, leading the charge in team fights and dealing significant damage throughout the game. Now, onto the most useless player in this match, we have to point fingers at "AmazonFireTV" playing as Bard. With only 1 kill, 6 deaths, and a staggering 31 assists, AmazonFireTV's impact on the game was minimal at best. Their total damage dealt to champions was a measly 15646, and they earned the least gold among the team members. It's safe to say that AmazonFireTV was dead weight in this match, being carried by the rest of the team and contributing very little to the overall success. AmazonFireTV, if you're reading this, I have to say that your performance was incredibly disappointing and you should seriously reconsider your choice of champion. You were a burden to your team and your lackluster performance was a disgrace to the game. Step up your game or consider finding a new hobby because League of Legends clearly isn't your forte.
+        template="""Analyze the following match data and provide a detailed description of who was the carry and who was the most useless. Make the analysis detailed and include some humorous or funny comments.
+        Here are some examples of how to analyze the data:
+        Example 1:
+        The carry was Player A due to *stats and praises*. Meanwhile, Player B was the least useful human being due to *stats and literal insults*.
         Now analyze the following match data:
         {match_details}"""
     )
@@ -143,10 +153,14 @@ async def analyze_match(request: MatchChoiceRequest):
     
     match_id = match_ids[request.match_index]
     match_data = get_match_details(match_id)
-    match_details = format_match_details(match_data, puuid)
-    match_details_str = json.dumps(match_details, indent=4)
+    match_info, good_player, bad_player = format_match_details(match_data, puuid)
+    match_details_str = json.dumps(match_info, indent=4)
     openai_response = get_response_from_openai(match_details_str)
-    return {"openai_response": openai_response.content}  # Correctly access the content attribute
+    return {
+        "openai_response": openai_response.content,
+        "good_player": good_player,
+        "bad_player": bad_player
+    }
 
 if __name__ == "__main__":
     import uvicorn
