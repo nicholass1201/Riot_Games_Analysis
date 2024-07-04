@@ -1,10 +1,13 @@
-from pydantic import BaseModel
+from sqlalchemy import Column, Integer, String, JSON
+from database import Base
 
-class UserRequest(BaseModel):
-    game_name: str
-    tag_line: str
+class MatchAnalysis(Base):
+    __tablename__ = "match_analysis"
 
-class MatchChoiceRequest(BaseModel):
-    game_name: str
-    tag_line: str
-    match_index: int
+    id = Column(Integer, primary_key=True, index=True)
+    match_id = Column(String, index=True)
+    good_player_name = Column(String, index=True)
+    good_player_stats = Column(JSON)
+    bad_player_name = Column(String, index=True)
+    bad_player_stats = Column(JSON)
+    analysis = Column(String)
